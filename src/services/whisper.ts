@@ -1,4 +1,5 @@
-import { pipeline } from '@xenova/transformers';
+// Dynamically import ES Module @xenova/transformers from CommonJS environment
+const loadTransformers = () => (new Function('specifier', 'return import(specifier)'))('@xenova/transformers');
 
 let transcriber: any = null;
 let isInitializing = false;
@@ -19,6 +20,7 @@ export async function getTranscriber() {
   isInitializing = true;
   try {
     console.log('[Whisper] Loading local pre-trained Whisper model (Xenova/whisper-tiny.en)...');
+    const { pipeline } = await loadTransformers();
     transcriber = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny.en');
     console.log('[Whisper] Model loaded and ready for transcription');
     return transcriber;

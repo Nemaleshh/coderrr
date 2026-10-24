@@ -30,8 +30,8 @@ declare global {
       close: () => void;
       quit: () => void;
       takeScreenshot: () => Promise<void>;
-      processScreenshots: () => Promise<void>;
-      processVoice: (data: { text?: string; audioSamples?: number[]; audioBase64?: string; mimeType?: string }) => Promise<any>;
+      processScreenshots: (complexity?: string) => Promise<void>;
+      processVoice: (data: { text?: string; audioBase64?: string; mimeType?: string; complexity?: string }) => Promise<any>;
       resetQueue: () => Promise<void>;
       getConfig: () => Promise<Config | null>;
       saveConfig: (config: Config) => Promise<boolean>;
@@ -56,6 +56,7 @@ const App: React.FC = () => {
   const [config, setConfig] = useState<Config | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [complexity, setComplexity] = useState<'brute' | 'medium' | 'optimal'>('optimal');
 
   // ── Voice Recording State & Refs ──────────────────────────────────────────
   const [isRecording, setIsRecording] = useState(false);
@@ -199,22 +200,7 @@ const App: React.FC = () => {
           audioStreamRef.current = null;
         }
 
-        // Decode audio to 16kHz PCM Float32Array for local Whisper model
-        let audioSamples: number[] | undefined = undefined;
-        try {
-          const arrayBuffer = await audioBlob.arrayBuffer();
-          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-          if (AudioContextClass) {
-            const audioCtx = new AudioContextClass({ sampleRate: 16000 });
-            const decoded = await audioCtx.decodeAudioData(arrayBuffer);
-            const channel = decoded.getChannelData(0);
-            audioSamples = Array.from(channel);
-          }
-        } catch (decodeErr) {
-          console.warn('Web Audio decode warning:', decodeErr);
-        }
-
-        // Convert Blob to Base64 (as fallback)
+        // Convert Blob to Base64 for Gemini audio fallback
         const reader = new FileReader();
         reader.readAsDataURL(audioBlob);
         reader.onloadend = async () => {
@@ -224,11 +210,13 @@ const App: React.FC = () => {
             setResult(null);
             setError(null);
 
+            // NOTE: Do NOT send audioSamples (PCM Float32 array) over IPC —
+            // 80,000+ numbers crash the Electron IPC channel. Send text + base64 only.
             await window.electron.processVoice({
               text: capturedText,
-              audioSamples: audioSamples,
               audioBase64: base64Data,
               mimeType: mimeType,
+              complexity: complexity,
             });
           } catch (processErr: any) {
             console.error('Error sending voice to main process:', processErr);
@@ -411,18 +399,18 @@ const App: React.FC = () => {
     }
   };
 
-  const handleProcess = async () => {
+  const handleProcess = async (overrideComplexity?: 'brute' | 'medium' | 'optimal') => {
     if (screenshots.length === 0) {
       setError('Take at least one screenshot first (Ctrl+H) or use Voice Question (Ctrl+M)');
       return;
     }
     if (isProcessing) return;
-
+    const level = overrideComplexity || complexity;
     setIsProcessing(true);
     setResult(null);
     setError(null);
     try {
-      await window.electron.processScreenshots();
+      await window.electron.processScreenshots(level);
     } catch (err: any) {
       console.error('Error processing screenshots:', err);
       setError(err?.message || 'Error processing screenshots');
@@ -534,6 +522,38 @@ const App: React.FC = () => {
         />
       )}
 
+      {/* Complexity Selector */}
+      <div className="complexity-selector" role="group" aria-label="Solution complexity">
+        <span className="complexity-label">Mode:</span>
+        <button
+          id="btn-brute"
+          className={`complexity-btn brute-btn ${complexity === 'brute' ? 'active' : ''}`}
+          onClick={() => setComplexity('brute')}
+          title="Brute Force — simple nested loops, no optimisation"
+          type="button"
+        >
+          🔴 Brute
+        </button>
+        <button
+          id="btn-medium"
+          className={`complexity-btn medium-btn ${complexity === 'medium' ? 'active' : ''}`}
+          onClick={() => setComplexity('medium')}
+          title="Medium — hash maps, sorting, two pointers"
+          type="button"
+        >
+          🟡 Medium
+        </button>
+        <button
+          id="btn-optimal"
+          className={`complexity-btn optimal-btn ${complexity === 'optimal' ? 'active' : ''}`}
+          onClick={() => setComplexity('optimal')}
+          title="Optimal — best possible time & space complexity"
+          type="button"
+        >
+          🟢 Optimal
+        </button>
+      </div>
+
       {/* Shortcuts & Action Row */}
       <div className="shortcuts-row">
         <div className="shortcut"><code>⌘/Ctrl + H</code> Screenshot</div>
@@ -634,7 +654,7 @@ const App: React.FC = () => {
             </div>
             <p className="status-error-message">{error}</p>
             <div className="status-error-actions">
-              <button className="status-error-btn retry-btn" onClick={handleProcess}>
+              <button className="status-error-btn retry-btn" onClick={() => handleProcess()}>
                 ↻ Retry (⌘/Ctrl + ↵)
               </button>
               <button className="status-error-btn reset-btn" onClick={handleReset}>

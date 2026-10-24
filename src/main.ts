@@ -4,7 +4,6 @@ import * as fs from 'fs/promises';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import geminiService from './services/gemini';
-import whisperService from './services/whisper';
 
 const execFileAsync = promisify(execFile);
 
@@ -237,14 +236,14 @@ async function handleTakeScreenshot() {
   }
 }
 
-async function handleProcessScreenshots() {
+async function handleProcessScreenshots(complexity: string = 'optimal') {
   if (isProcessing || screenshotQueue.length === 0) return;
   
   isProcessing = true;
   mainWindow?.webContents.send('processing-started');
 
   try {
-    const result = await geminiService.processScreenshots(screenshotQueue);
+    const result = await geminiService.processScreenshots(screenshotQueue, complexity as any);
     // Check if processing was cancelled
     if (!isProcessing) return;
     mainWindow?.webContents.send('processing-complete', JSON.stringify(result));
@@ -347,8 +346,6 @@ app.whenReady().then(async () => {
   });
 
   await ensureScreenshotDir();
-  // Pre-warm local Whisper model in background so it's instant on first speech
-  whisperService.getTranscriber().catch((err: any) => console.warn('[Whisper] Warmup warning:', err));
   // Load config before creating window
   config = await loadConfig();
   createWindow();
@@ -372,31 +369,22 @@ app.on('window-all-closed', function () {
 
 // IPC Handlers
 ipcMain.handle('take-screenshot', handleTakeScreenshot);
-ipcMain.handle('process-screenshots', handleProcessScreenshots);
+ipcMain.handle('process-screenshots', (_, complexity?: string) => handleProcessScreenshots(complexity));
 ipcMain.handle('reset-queue', handleResetQueue);
 
-ipcMain.handle('process-voice', async (_, data: { text?: string; audioSamples?: number[]; audioBase64?: string; mimeType?: string }) => {
+ipcMain.handle('process-voice', async (_, data: { text?: string; audioBase64?: string; mimeType?: string; complexity?: string }) => {
   if (isProcessing) return;
   isProcessing = true;
   mainWindow?.webContents.send('processing-started');
 
   try {
-    let promptText = data.text?.trim() || '';
+    const promptText = data.text?.trim() || '';
 
-    // If text is not provided, transcribe the audio using local pre-trained Whisper model
-    if (!promptText && data.audioSamples && data.audioSamples.length > 0) {
-      try {
-        console.log('[Voice] Transcribing audio with local Whisper model...');
-        promptText = await whisperService.transcribeAudio(data.audioSamples);
-      } catch (whisperErr) {
-        console.warn('[Voice] Local Whisper transcription failed, falling back:', whisperErr);
-      }
-    }
-
-    // Send pure text to Gemini (ultra-fast text completion)
+    // If we have transcribed text from browser SpeechRecognition, use it directly (fastest, cheapest)
+    // Otherwise fall back to sending the raw audio base64 to Gemini for transcription
     const result = promptText
-      ? await geminiService.processVoiceQuestion(promptText)
-      : await geminiService.processVoiceQuestion(undefined, data.audioBase64, data.mimeType);
+      ? await geminiService.processVoiceQuestion(promptText, undefined, undefined, data.complexity as any || 'optimal')
+      : await geminiService.processVoiceQuestion(undefined, data.audioBase64, data.mimeType, data.complexity as any || 'optimal');
 
     if (!isProcessing) return;
     mainWindow?.webContents.send('processing-complete', JSON.stringify(result));
@@ -414,8 +402,8 @@ ipcMain.handle('process-voice', async (_, data: { text?: string; audioSamples?: 
 
     mainWindow?.webContents.send('processing-complete', JSON.stringify({
       error: errorMessage,
-      approach: 'Error occurred while processing voice question',
-      code: 'Error: ' + errorMessage,
+      approach: 'Error occurred while processing voice question. Please check your API key in Settings (Ctrl+P).',
+      code: '',
       timeComplexity: 'N/A',
       spaceComplexity: 'N/A'
     }));

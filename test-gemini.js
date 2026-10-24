@@ -6,17 +6,23 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+require('dotenv').config();
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // ── All API keys to test (read from env) ──────────────────────────────────
 const API_KEYS = [
-  { label: 'Environment Key', key: process.env.GEMINI_API_KEY || '' },
+  { label: 'GEMINI_API_KEY', key: process.env.GEMINI_API_KEY || '' },
+  { label: 'GEMINI_API_KEY_2', key: process.env.GEMINI_API_KEY_2 || '' },
+  { label: 'REACT_APP_GEMINI_API_KEY', key: process.env.REACT_APP_GEMINI_API_KEY || '' },
 ].filter(k => k.key);
 
 // ── Models to test ────────────────────────────────────────────────────────────
 const MODELS = [
-  'gemini-3.6-flash',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
   'gemini-3.7-flash',
+  'gemini-3.6-flash',
 ];
 
 const TEST_PROMPT = `What is 2 + 2? Reply with ONLY a JSON object: {"answer": "4"}`;

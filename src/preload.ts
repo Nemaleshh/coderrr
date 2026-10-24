@@ -13,8 +13,8 @@ contextBridge.exposeInMainWorld('electron', {
   quit: () => ipcRenderer.send('quit-app'),
 
   takeScreenshot: () => ipcRenderer.invoke('take-screenshot'),
-  processScreenshots: () => ipcRenderer.invoke('process-screenshots'),
-  processVoice: (data: { text?: string; audioSamples?: number[]; audioBase64?: string; mimeType?: string }) =>
+  processScreenshots: (complexity?: string) => ipcRenderer.invoke('process-screenshots', complexity),
+  processVoice: (data: { text?: string; audioBase64?: string; mimeType?: string; complexity?: string }) =>
     ipcRenderer.invoke('process-voice', data),
   resetQueue: () => ipcRenderer.invoke('reset-queue'),
   getConfig: () => ipcRenderer.invoke('get-config'),

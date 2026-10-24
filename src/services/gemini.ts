@@ -17,10 +17,12 @@ const HARDCODED_KEYS: string[] = [
 ].filter(Boolean) as string[];
 
 // ─── Models in fallback order (primary → fallback) ───────────────────────────
-const MODELS: string[] = [
-  'gemini-3.8-flash',      // gemini 3.8 flash (primary / newest generation)
-  'gemini-3.7-flash',      // gemini 3.7 flash (fallback with thinking levels)
-  'gemini-3.6-flash',      // gemini 3.6 flash (legacy fallback)
+const MODELS: string[] = [      // gemini 3.8 flash (primary / newest generation)
+  'gemini-3.6-flash',      // gemini 3.7 flash (fallback with thinking levels)
+  'gemini-3.7-flash',      // gemini 3.6 flash (legacy fallback)
+  'gemini-2.5-flash',      // gemini 2.5 flash
+  'gemini-2.0-flash',      // gemini 2.0 flash
+  'gemini-1.5-flash',      // gemini 1.5 flash (standard stable fallback)
   'gemini-3.5-flash',      // gemini 3.5 flash (stable long-horizon fallback)
   'gemini-3.5-flash-lite', // gemini 3.5 flash-lite (highly efficient economy tier)
   'gemini-3.1-flash-lite', // gemini 3.1 flash-lite (legacy ultra-low latency fallback)
@@ -75,11 +77,36 @@ interface ProcessedSolution {
   spaceComplexity: string;
 }
 
+// ─── Complexity type ───────────────────────────────────────────────────────────
+export type SolutionComplexity = 'brute' | 'medium' | 'optimal';
+
 // ─── Optimised System Prompt ──────────────────────────────────────────────────
-function buildSystemPrompt(): string {
+function buildSystemPrompt(complexity: SolutionComplexity = 'optimal'): string {
+  const complexityInstructions: Record<SolutionComplexity, string> = {
+    brute: `COMPLEXITY LEVEL: BRUTE FORCE
+- Provide the simplest, most straightforward solution that solves the problem correctly.
+- Use nested loops, recursion without memoization, or naive approaches — prioritise CLARITY over efficiency.
+- For DSA: Use O(n²) or O(n³) time if that's the natural brute-force; explain WHY it's brute-force.
+- Explicitly state: "This is a brute-force approach. It may be slow for large inputs."`,
+
+    medium: `COMPLEXITY LEVEL: MEDIUM / BETTER
+- Provide a solution that is better than brute-force but not necessarily fully optimal.
+- Use sorting, hash maps, two pointers, or simple DP where applicable.
+- For DSA: Aim for O(n log n) or O(n) time, O(n) space is acceptable.
+- Explicitly state the improvement over brute-force and mention what further optimisation would look like.`,
+
+    optimal: `COMPLEXITY LEVEL: OPTIMAL
+- Provide the most optimal solution possible — best time AND space complexity.
+- Use advanced techniques: sliding window, binary search, monotonic stack, segment tree, DP with optimisation, etc.
+- For DSA: Prioritise O(n) or O(n log n) time. Minimise auxiliary space. No redundant passes.
+- Explicitly state this is the optimal solution with proven complexity.`,
+  };
+
   return `You are CrackCoder — a world-class AI expert at competitive programming, Data Structures & Algorithms (DSA), SQL & Database queries, MCQ aptitude, and technical interviews.
 
 TASK: Analyse the question(s) shown in the screenshot(s) and provide a perfect, interview-ready solution.
+
+${complexityInstructions[complexity]}
 
 DETECT QUESTION TYPE automatically:
 • DSA / Coding Problem  → full working ${language} code + step-by-step approach + complexity analysis
@@ -90,7 +117,7 @@ DETECT QUESTION TYPE automatically:
 RESPONSE FORMAT — return ONLY valid JSON (no markdown fences):
 {
   "approach": "Clear, concise 3-5 sentence explanation an interviewee would speak aloud. For SQL explain JOINs/CTEs/filters used. For MCQ state 'Answer: X) ...' with rationale. For DSA explain pattern/algorithm.",
-  "code": "For coding/DSA: complete, optimal ${language} code with comments. For SQL: clean, production-ready SQL query. For MCQ: correct option letter and answer. Empty string if not applicable.",
+  "code": "For coding/DSA: complete ${language} code with comments. For SQL: clean, production-ready SQL query. For MCQ: correct option letter and answer. Empty string if not applicable.",
   "timeComplexity": "Big-O time complexity with brief reason (write N/A for SQL or non-coding questions)",
   "spaceComplexity": "Big-O space complexity with brief reason (write N/A for SQL or non-coding questions)"
 }
@@ -100,18 +127,20 @@ RULES:
 - For DSA/Coding: Code must be complete, bug-free, and syntactically correct in ${language}.
 - For SQL: Write standard ANSI SQL (or engine-specific if mentioned, e.g. MySQL / PostgreSQL / Oracle). Include necessary JOINs, WHERE, GROUP BY, HAVING, or Window Functions.
 - For MCQs: Clearly begin approach with 'Answer: <Option Letter>) ...'.
-- Prioritise optimal solutions (best time & space complexity).`;
+- Follow the complexity level instructions above strictly.`;
 }
 
 // ─── Fallback logic: key × model ─────────────────────────────────────────────
-async function callGeminiWithFallback(parts: Part[]): Promise<string> {
+async function callGeminiWithFallback(parts: Part[], complexity: SolutionComplexity = 'optimal'): Promise<string> {
   const keys = getKeyList();
   const errors: string[] = [];
+  const totalStart = Date.now();
 
   for (const key of keys) {
     for (const model of MODELS) {
+      const t0 = Date.now();
       try {
-        console.log(`[Gemini] Trying model=${model} key=...${key.slice(-8)}`);
+        console.log(`[Gemini] ⏳ Trying model=${model} key=...${key.slice(-8)} complexity=${complexity}`);
         const genAI = new GoogleGenerativeAI(key);
         const genModel: GenerativeModel = genAI.getGenerativeModel({ model });
 
@@ -119,7 +148,7 @@ async function callGeminiWithFallback(parts: Part[]): Promise<string> {
           contents: [{ role: 'user', parts }],
           systemInstruction: {
             role: 'system',
-            parts: [{ text: buildSystemPrompt() }],
+            parts: [{ text: buildSystemPrompt(complexity) }],
           },
           generationConfig: {
             temperature: 0.3,
@@ -129,11 +158,14 @@ async function callGeminiWithFallback(parts: Part[]): Promise<string> {
         });
 
         const text = result.response.text();
-        console.log(`[Gemini] SUCCESS model=${model} key=...${key.slice(-8)}`);
+        const elapsed = Date.now() - t0;
+        const totalElapsed = Date.now() - totalStart;
+        console.log(`[Gemini] ✅ SUCCESS model=${model} key=...${key.slice(-8)} — API: ${elapsed}ms | Total: ${totalElapsed}ms`);
         return text;
       } catch (err: any) {
+        const elapsed = Date.now() - t0;
         const msg = `model=${model} key=...${key.slice(-8)}: ${err?.message || err}`;
-        console.warn(`[Gemini] FAILED — ${msg}`);
+        console.warn(`[Gemini] ❌ FAILED (${elapsed}ms) — ${msg}`);
         errors.push(msg);
       }
     }
@@ -144,14 +176,16 @@ async function callGeminiWithFallback(parts: Part[]): Promise<string> {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 export async function processScreenshots(
-  screenshots: { path: string }[]
+  screenshots: { path: string }[],
+  complexity: SolutionComplexity = 'optimal'
 ): Promise<ProcessedSolution> {
   if (!screenshots || screenshots.length === 0) {
     throw new Error('No screenshots provided for processing');
   }
 
+  const complexityLabel = { brute: '🔴 Brute Force', medium: '🟡 Medium', optimal: '🟢 Optimal' }[complexity];
   const parts: Part[] = [
-    { text: 'Analyse the question(s) in the following screenshot(s) and respond per the system instructions.' },
+    { text: `Analyse the question(s) in the following screenshot(s) and respond per the system instructions. Solution mode: ${complexityLabel}.` },
   ];
 
   for (const screenshot of screenshots) {
@@ -169,7 +203,7 @@ export async function processScreenshots(
     }
   }
 
-  const rawText = await callGeminiWithFallback(parts);
+  const rawText = await callGeminiWithFallback(parts, complexity);
 
   // Strip any accidental markdown fences
   const cleaned = rawText
@@ -200,7 +234,8 @@ export async function processScreenshots(
 export async function processVoiceQuestion(
   textPrompt?: string,
   audioBase64?: string,
-  mimeType: string = 'audio/webm'
+  mimeType: string = 'audio/webm',
+  complexity: SolutionComplexity = 'optimal'
 ): Promise<ProcessedSolution & { userPrompt?: string }> {
   const parts: Part[] = [];
 
@@ -213,17 +248,18 @@ export async function processVoiceQuestion(
     });
   }
 
+  const complexityLabel = { brute: '🔴 Brute Force', medium: '🟡 Medium', optimal: '🟢 Optimal' }[complexity];
   if (textPrompt && textPrompt.trim()) {
     parts.push({
-      text: `User spoke the following question/prompt: "${textPrompt.trim()}". Solve or answer it following the system instructions.`,
+      text: `User spoke the following question/prompt: "${textPrompt.trim()}". Solution mode: ${complexityLabel}. Solve or answer it following the system instructions.`,
     });
   } else {
     parts.push({
-      text: `Listen to the voice audio provided above. Understand the question asked by the user, and provide the complete solution following the system instructions.`,
+      text: `Listen to the voice audio provided above. Understand the question asked by the user. Solution mode: ${complexityLabel}. Provide the complete solution following the system instructions.`,
     });
   }
 
-  const rawText = await callGeminiWithFallback(parts);
+  const rawText = await callGeminiWithFallback(parts, complexity);
 
   const cleaned = rawText
     .replace(/^```(?:json)?\s*/i, '')
@@ -255,3 +291,5 @@ export default {
   processVoiceQuestion,
   updateConfig,
 };
+
+
